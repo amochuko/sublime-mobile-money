@@ -51,11 +51,9 @@ export const depositHandler = async (req: Request, res: Response) => {
       error instanceof Error &&
       error.message.includes("Unable to acquire lock")
     ) {
-      return res
-        .status(409)
-        .json({
-          error: "Transaction already in progress for this phone number",
-        });
+      return res.status(409).json({
+        error: "Transaction already in progress for this phone number",
+      });
     }
     res.status(500).json({ error: "Transaction failed" });
   }
@@ -108,13 +106,33 @@ export const getTransactionHandler = async (req: Request, res: Response) => {
     if (transaction.status === TransactionStatus.Pending) {
       jobProgress = await getJobProgress(id);
     }
+const timeoutMinutes = Number(process.env.TRANSACTION_TIMEOUT_MINUTES || 30);
 
+if (transaction.status === TransactionStatus.Pending) {
+  const createdAt = new Date(transaction.createdAt).getTime();
+  const now = Date.now();
+
+  const diffMinutes = (now - createdAt) / (1000 * 60);
+
+  if (diffMinutes > timeoutMinutes) {
+    await transactionModel.updateStatus(id, TransactionStatus.Failed, {
+      reason: "Transaction timeout",
+    });
+
+    console.log("Transaction timed out (on fetch)", {
+      transactionId: id,
+      timeoutMinutes,
+    });
+
+    transaction.status = TransactionStatus.Failed;
+    (transaction as any).reason = "Transaction timeout";
+  }
+}
     res.json({ ...transaction, jobProgress });
   } catch (error) {
     res.status(500).json({ error: "Failed to fetch transaction" });
   }
 };
-
 
 export const cancelTransactionHandler = async (req: Request, res: Response) => {
   try {
@@ -129,13 +147,19 @@ export const cancelTransactionHandler = async (req: Request, res: Response) => {
       });
     }
 
-    if (transaction.status !== "pending") {
+    if (transaction.status !== TransactionStatus.Pending) {
       return res.status(400).json({
         error: `Cannot cancel transaction with status '${transaction.status}'`,
       });
     }
 
-    const updatedTransaction = await transactionModel.updateStatus(id, "cancelled" );
+    await transactionModel.updateStatus(id, TransactionStatus.Cancelled);
+    const updatedTransaction = await transactionModel.findById(id);
+    if (!updatedTransaction) {
+      return res.status(500).json({
+        error: "Failed to load transaction after cancel",
+      });
+    }
 
     console.log("Transaction cancelled", {
       transactionId: id,
