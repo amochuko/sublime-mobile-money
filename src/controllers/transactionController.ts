@@ -7,9 +7,13 @@ import { lockManager, LockKeys } from "../utils/lock";
 import { TransactionLimitService } from "../services/transactionLimit/transactionLimitService";
 import { KYCService } from "../services/kyc/kycService";
 import { addTransactionJob, getJobProgress } from "../queue";
+import {
+  TransactionResponse,
+  TransactionDetailResponse,
+  CancelTransactionResponse,
+  LimitExceededErrorResponse,
+} from "../types/api";
 
-// ------------------ Services ------------------
-// Initialize services (will be used in future implementations)
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const stellarService = new StellarService();
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -54,17 +58,15 @@ export const validateTransaction = (
 // ------------------ Handlers ------------------
 export const depositHandler = async (req: Request, res: Response) => {
   try {
-    const { amount, phoneNumber, provider, stellarAddress, userId, notes } =
-      req.body;
+    const { amount, phoneNumber, provider, stellarAddress, userId } = req.body;
 
-    // Validate transaction limit
     const limitCheck = await transactionLimitService.checkTransactionLimit(
       userId,
       parseFloat(amount),
     );
 
     if (!limitCheck.allowed) {
-      return res.status(400).json({
+      const body: LimitExceededErrorResponse = {
         error: "Transaction limit exceeded",
         details: {
           kycLevel: limitCheck.kycLevel,
@@ -74,13 +76,13 @@ export const depositHandler = async (req: Request, res: Response) => {
           message: limitCheck.message,
           upgradeAvailable: limitCheck.upgradeAvailable,
         },
-      });
+      };
+      return res.status(400).json(body);
     }
 
-    // Use distributed lock to prevent duplicate transactions from same phone number
     const result = await lockManager.withLock(
       LockKeys.phoneNumber(phoneNumber),
-      async () => {
+      async (): Promise<TransactionResponse> => {
         const transaction = await transactionModel.create({
           type: "deposit",
           amount,
@@ -89,7 +91,6 @@ export const depositHandler = async (req: Request, res: Response) => {
           stellarAddress,
           status: TransactionStatus.Pending,
           tags: [],
-          notes,
         });
 
         const job = await addTransactionJob({
@@ -129,17 +130,15 @@ export const depositHandler = async (req: Request, res: Response) => {
 
 export const withdrawHandler = async (req: Request, res: Response) => {
   try {
-    const { amount, phoneNumber, provider, stellarAddress, userId, notes } =
-      req.body;
+    const { amount, phoneNumber, provider, stellarAddress, userId } = req.body;
 
-    // Validate transaction limit
     const limitCheck = await transactionLimitService.checkTransactionLimit(
       userId,
       parseFloat(amount),
     );
 
     if (!limitCheck.allowed) {
-      return res.status(400).json({
+      const body: LimitExceededErrorResponse = {
         error: "Transaction limit exceeded",
         details: {
           kycLevel: limitCheck.kycLevel,
@@ -149,12 +148,13 @@ export const withdrawHandler = async (req: Request, res: Response) => {
           message: limitCheck.message,
           upgradeAvailable: limitCheck.upgradeAvailable,
         },
-      });
+      };
+      return res.status(400).json(body);
     }
 
     const result = await lockManager.withLock(
       LockKeys.phoneNumber(phoneNumber),
-      async () => {
+      async (): Promise<TransactionResponse> => {
         const transaction = await transactionModel.create({
           type: "withdraw",
           amount,
@@ -163,7 +163,6 @@ export const withdrawHandler = async (req: Request, res: Response) => {
           stellarAddress,
           status: TransactionStatus.Pending,
           tags: [],
-          notes,
         });
 
         const job = await addTransactionJob({
@@ -199,7 +198,6 @@ export const withdrawHandler = async (req: Request, res: Response) => {
   }
 };
 
-// ------------------ Other Handlers (no validation needed) ------------------
 export const getTransactionHandler = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
@@ -211,30 +209,29 @@ export const getTransactionHandler = async (req: Request, res: Response) => {
     if (transaction.status === TransactionStatus.Pending) {
       jobProgress = await getJobProgress(id);
     }
+
     const timeoutMinutes = Number(
       process.env.TRANSACTION_TIMEOUT_MINUTES || 30,
     );
 
     if (transaction.status === TransactionStatus.Pending) {
       const createdAt = new Date(transaction.createdAt).getTime();
-      const now = Date.now();
-
-      const diffMinutes = (now - createdAt) / (1000 * 60);
+      const diffMinutes = (Date.now() - createdAt) / (1000 * 60);
 
       if (diffMinutes > timeoutMinutes) {
         await transactionModel.updateStatus(id, TransactionStatus.Failed);
-
         console.log("Transaction timed out (on fetch)", {
           transactionId: id,
           timeoutMinutes,
           reason: "Transaction timeout",
         });
-
         transaction.status = TransactionStatus.Failed;
         (transaction as { reason?: string }).reason = "Transaction timeout";
       }
     }
-    res.json({ ...transaction, jobProgress });
+
+    const response: TransactionDetailResponse = { ...transaction, jobProgress };
+    res.json(response);
   } catch (err) {
     console.error("Failed to fetch transaction:", err);
     res.status(500).json({ error: "Failed to fetch transaction" });
@@ -244,7 +241,6 @@ export const getTransactionHandler = async (req: Request, res: Response) => {
 export const cancelTransactionHandler = async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
-    const { reason } = req.body;
 
     const transaction = await transactionModel.findById(id);
     if (!transaction)
@@ -282,84 +278,25 @@ export const cancelTransactionHandler = async (req: Request, res: Response) => {
     res.json({
       message: "Transaction cancelled successfully",
       transaction: updatedTransaction,
-    });
+    };
+    return res.json(body);
   } catch (err) {
     console.error("Failed to cancel transaction:", err);
-    res.status(500).json({
-      error: "Failed to cancel transaction",
-    });
+    res.status(500).json({ error: "Failed to cancel transaction" });
   }
 };
 
 export const updateNotesHandler = async (req: Request, res: Response) => {
-  try {
-    const { id } = req.params;
-    const { notes } = req.body;
-
-    if (typeof notes !== "string") {
-      return res.status(400).json({ error: "Notes must be a string" });
-    }
-
-    const transaction = await transactionModel.updateNotes(id, notes);
-    if (!transaction) {
-      return res.status(404).json({ error: "Transaction not found" });
-    }
-
-    res.json(transaction);
-  } catch (err) {
-    const message =
-      err instanceof Error ? err.message : "Failed to update notes";
-    res
-      .status(
-        err instanceof Error && err.message.includes("characters") ? 400 : 500,
-      )
-      .json({ error: message });
-  }
+  res.status(501).json({ error: "Not implemented" });
 };
 
 export const updateAdminNotesHandler = async (req: Request, res: Response) => {
-  try {
-    const { id } = req.params;
-    const { admin_notes } = req.body;
-
-    if (typeof admin_notes !== "string") {
-      return res.status(400).json({ error: "Admin notes must be a string" });
-    }
-
-    const transaction = await transactionModel.updateAdminNotes(
-      id,
-      admin_notes,
-    );
-    if (!transaction) {
-      return res.status(404).json({ error: "Transaction not found" });
-    }
-
-    res.json(transaction);
-  } catch (err) {
-    const message =
-      err instanceof Error ? err.message : "Failed to update admin notes";
-    res
-      .status(
-        err instanceof Error && err.message.includes("characters") ? 400 : 500,
-      )
-      .json({ error: message });
-  }
+  res.status(501).json({ error: "Not implemented" });
 };
 
 export const searchTransactionsHandler = async (
   req: Request,
   res: Response,
 ) => {
-  try {
-    const { q } = req.query;
-    if (!q || typeof q !== "string") {
-      return res.status(400).json({ error: "Query parameter 'q' is required" });
-    }
-
-    const transactions = await transactionModel.searchByNotes(q);
-    res.json(transactions);
-  } catch (err) {
-    console.error("Search failed:", err);
-    res.status(500).json({ error: "Search failed" });
-  }
+  res.status(501).json({ error: "Not implemented" });
 };

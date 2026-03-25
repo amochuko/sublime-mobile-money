@@ -49,11 +49,6 @@ export class AirtelService {
     }
   }
 
-  /**
-   * =========================
-   * RETRY WRAPPER
-   * =========================
-   */
   private async withRetry<T>(fn: () => Promise<T>, retries = 3): Promise<T> {
     let lastError: Error | undefined;
 
