@@ -119,3 +119,35 @@ DROP TRIGGER IF EXISTS permissions_updated_at ON permissions;
 CREATE TRIGGER permissions_updated_at
   BEFORE UPDATE ON permissions
   FOR EACH ROW EXECUTE FUNCTION update_permissions_updated_at();
+
+-- KYC Applicants table for storing KYC provider references
+CREATE TABLE IF NOT EXISTS kyc_applicants (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  applicant_id VARCHAR(255) UNIQUE NOT NULL, -- KYC provider applicant ID
+  provider VARCHAR(50) NOT NULL DEFAULT 'entrust', -- KYC provider name
+  applicant_data JSONB, -- Full applicant data from provider
+  verification_status VARCHAR(20) NOT NULL DEFAULT 'pending',
+  kyc_level VARCHAR(20) NOT NULL DEFAULT 'none',
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_kyc_applicants_user_id ON kyc_applicants(user_id);
+CREATE INDEX IF NOT EXISTS idx_kyc_applicants_applicant_id ON kyc_applicants(applicant_id);
+CREATE INDEX IF NOT EXISTS idx_kyc_applicants_status ON kyc_applicants(verification_status);
+CREATE INDEX IF NOT EXISTS idx_kyc_applicants_kyc_level ON kyc_applicants(kyc_level);
+
+-- Auto-update updated_at for kyc_applicants
+CREATE OR REPLACE FUNCTION update_kyc_applicants_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = CURRENT_TIMESTAMP;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS kyc_applicants_updated_at ON kyc_applicants;
+CREATE TRIGGER kyc_applicants_updated_at
+  BEFORE UPDATE ON kyc_applicants
+  FOR EACH ROW EXECUTE FUNCTION update_kyc_applicants_updated_at();

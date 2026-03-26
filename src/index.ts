@@ -10,6 +10,7 @@ import { bulkRoutes } from "./routes/bulk";
 import { transactionDisputeRoutes, disputeRoutes } from "./routes/disputes";
 import { statsRoutes } from "./routes/stats";
 import { authRoutes } from "./routes/auth";
+import kycRoutes from "./routes/kycRoutes";
 import { errorHandler } from "./middleware/errorHandler";
 import { connectRedis, redisClient } from "./config/redis";
 import { pool } from "./config/database";
@@ -155,6 +156,7 @@ app.use(haltOnTimedout);
 
 // Routes
 app.use("/api/auth", authRoutes);
+app.use("/api/kyc", kycRoutes);
 app.use("/api/transactions", transactionRoutes);
 app.use("/api/transactions", transactionDisputeRoutes);
 app.use("/api/transactions/bulk", bulkRoutes);
@@ -208,16 +210,13 @@ app.use("/admin/queues", queueRouter);
 // --- START SERVER LOGIC ---
 // We check if we are in a test environment to prevent port collisions
 if (process.env.NODE_ENV !== 'test') {
-  app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+  app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+    console.log(
+      `Rate limit: ${RATE_LIMIT_MAX_REQUESTS} requests per ${RATE_LIMIT_WINDOW_MS / 1000}s`,
+    );
+  });
 }
 
 // Export the app instance for Supertest integration tests
-export default app;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-  console.log(
-    `Rate limit: ${RATE_LIMIT_MAX_REQUESTS} requests per ${RATE_LIMIT_WINDOW_MS / 1000}s`,
-  );
-});
-
 export default app;
