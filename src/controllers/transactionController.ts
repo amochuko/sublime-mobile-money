@@ -1,5 +1,6 @@
 import { NextFunction, Request, Response } from "express";
 import { z } from "zod";
+import { pool } from "../config/database";
 import { StellarService } from "../services/stellar/stellarService";
 import { MobileMoneyService } from "../services/mobilemoney/mobileMoneyService";
 import { Transaction, TransactionModel, TransactionStatus } from "../models/transaction";
@@ -372,10 +373,6 @@ export const getTransactionHandler = async (req: Request, res: Response) => {
     if (transaction.status === TransactionStatus.Pending) {
       jobProgress = await getJobProgress(id);
     }
-
-    const timeoutMinutes = Number(
-      process.env.TRANSACTION_TIMEOUT_MINUTES || 30,
-    );
 
     if (transaction.status === TransactionStatus.Pending) {
       const createdAt = new Date(transaction.createdAt).getTime();
