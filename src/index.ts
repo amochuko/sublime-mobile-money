@@ -4,6 +4,7 @@ import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import compression from "compression";
 import dotenv from "dotenv";
+import session from "express-session";
 
 // API Versioning
 import {
@@ -28,7 +29,12 @@ import { transactionDisputeRoutes, disputeRoutes } from "./routes/disputes";
 import { statsRoutes } from "./routes/stats";
 import { reportsRoutes } from "./routes/reports";
 import { errorHandler } from "./middleware/errorHandler";
-import { connectRedis, redisClient } from "./config/redis";
+import {
+  connectRedis,
+  redisClient,
+  createRedisStore,
+  SESSION_TTL_SECONDS,
+} from "./config/redis";
 import { pool } from "./config/database";
 import {
   globalTimeout,
@@ -121,6 +127,25 @@ app.use(
 app.use(limiter);
 app.use(responseTime);
 app.use(requestId);
+
+// Session configuration with Redis store
+const sessionSecret =
+  process.env.SESSION_SECRET || "default-secret-change-in-production";
+const redisStore = createRedisStore();
+
+app.use(
+  session({
+    store: redisStore,
+    secret: sessionSecret,
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      secure: process.env.NODE_ENV === "production",
+      httpOnly: true,
+      maxAge: SESSION_TTL_SECONDS * 1000,
+    },
+  }),
+);
 
 // Health & readiness
 app.get("/health", (req, res) =>
