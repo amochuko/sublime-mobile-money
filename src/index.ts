@@ -27,6 +27,7 @@ import { contactsRoutes } from "./routes/contacts";
 import { reportsRoutes } from "./routes/reports";
 import { createKYCRoutes } from "./routes/kycRoutes";
 import { vaultRoutes } from "./routes/vaults";
+import { createPushRouter } from "./routes/push";
 import { errorHandler } from "./middleware/errorHandler";
 import {
   connectRedis,
@@ -219,6 +220,9 @@ app.use("/api/contacts", contactsRoutes);
 app.use("/api/reports", reportsRoutes);
 app.use("/api/kyc", createKYCRoutes(pool));
 app.use("/sep31", sep31Router);
+
+// Push notifications API
+app.use("/push", createPushRouter());
 
 // SEP-24 Interactive Deposit/Withdrawal Flow
 app.use("/sep24", sep24Router);
