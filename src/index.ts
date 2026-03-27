@@ -272,7 +272,15 @@ async function initializeRuntime(): Promise<void> {
   const { createQueueDashboard } = await import("./queue/dashboard");
   app.use("/admin/queues", createQueueDashboard());
 
-  app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+  // Start the HTTP server
+  const httpServer = app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+  });
+
+  // Start Apollo GraphQL server with subscriptions
+  const { startApolloServer } = await import("./graphql/server");
+  await startApolloServer(app, httpServer);
+  console.log("Apollo GraphQL server with subscriptions started");
 }
 
 if (process.env.NODE_ENV !== "test") {
