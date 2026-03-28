@@ -21,6 +21,12 @@ import {
   parseCSV,
   reconcileTransactions,
 } from "../services/csvReconciliation";
+import {
+  getTransactionResolutionPercentiles,
+  getDisputeResolutionPercentiles,
+  getTransactionResolutionTrends,
+  getDisputeResolutionTrends,
+} from "../services/metrics";
 import { dlqInspectorHandler } from "../queue/dlq";
 
 const router = Router();
@@ -165,6 +171,68 @@ const paginate = <T>(data: T[], page: number, limit: number) => {
     },
   };
 };
+
+/**
+ * =========================
+ * METRICS
+ * =========================
+ */
+
+// GET /api/admin/metrics/transactions/resolution
+router.get(
+  "/metrics/transactions/resolution",
+  requireAdmin,
+  logAdminAction("GET_TRANSACTION_RESOLUTION_METRICS"),
+  async (req: Request, res: Response) => {
+    try {
+      const daysBack = parseInt(req.query.days as string) || 30;
+      const metrics = await getTransactionResolutionPercentiles(daysBack);
+      const trends = await getTransactionResolutionTrends(7);
+
+      res.json({
+        metrics,
+        trends,
+        period: `${daysBack} days`,
+        sla_threshold_ms: 24 * 60 * 60 * 1000,
+        sla_threshold_hours: 24,
+      });
+    } catch (err) {
+      console.error("Error fetching transaction resolution metrics:", err);
+      res.status(500).json({
+        message: "Failed to retrieve transaction resolution metrics",
+        error: err instanceof Error ? err.message : "Unknown error",
+      });
+    }
+  },
+);
+
+// GET /api/admin/metrics/disputes/resolution
+router.get(
+  "/metrics/disputes/resolution",
+  requireAdmin,
+  logAdminAction("GET_DISPUTE_RESOLUTION_METRICS"),
+  async (req: Request, res: Response) => {
+    try {
+      const daysBack = parseInt(req.query.days as string) || 30;
+      const metrics = await getDisputeResolutionPercentiles(daysBack);
+      const trends = await getDisputeResolutionTrends(7);
+
+      res.json({
+        metrics,
+        trends,
+        period: `${daysBack} days`,
+        sla_threshold_ms: 24 * 60 * 60 * 1000,
+        sla_threshold_hours: 24,
+      });
+    } catch (err) {
+      console.error("Error fetching dispute resolution metrics:", err);
+      res.status(500).json({
+        message: "Failed to retrieve dispute resolution metrics",
+        error: err instanceof Error ? err.message : "Unknown error",
+      });
+    }
+  },
+);
 
 /**
  * =========================
@@ -642,7 +710,7 @@ router.post(
   "/reconcile",
   requireAdmin,
   logAdminAction("CSV_RECONCILIATION"),
-  csvUpload.single("csv"),
+  csvUpload.single("csv") as any,
   async (req: Request, res: Response) => {
     try {
       if (!req.file) {
