@@ -16,6 +16,7 @@ import {
   parseCSV,
   reconcileTransactions,
 } from "../services/csvReconciliation";
+import { dlqInspectorHandler } from "../queue/dlq";
 
 const router = Router();
 const IMPERSONATION_TOKEN_EXPIRES_IN = "15m";
@@ -111,11 +112,7 @@ const requireAdmin = (req: Request, res: Response, next: NextFunction) => {
   next();
 };
 
-const requireSuperAdmin = (
-  req: Request,
-  res: Response,
-  next: NextFunction,
-) => {
+const requireSuperAdmin = (req: Request, res: Response, next: NextFunction) => {
   const user = (req as AuthRequest).user;
 
   if (!user || !isSuperAdminRole(user.role)) {
@@ -184,7 +181,6 @@ router.get(
     res.json(result);
   },
 );
-
 // GET /api/admin/users/:id
 router.get(
   "/users/:id",
@@ -200,7 +196,6 @@ router.get(
     res.json(user);
   },
 );
-
 // POST /api/admin/users/:id/impersonation-token
 router.post(
   "/users/:id/impersonation-token",
@@ -294,6 +289,8 @@ router.post(
   },
 );
 
+export default router;
+
 // PUT /api/admin/users/:id
 router.put(
   "/users/:id",
@@ -347,13 +344,13 @@ router.post(
 
       // Validate reason
       if (!reason || typeof reason !== "string" || reason.trim().length === 0) {
-        return res.status(400).json({ 
-          message: "A reason is required for freezing an account" 
+        return res.status(400).json({
+          message: "A reason is required for freezing an account",
         });
       }
 
       const userModel = new UserModel();
-      
+
       // Check if user exists
       const user = await userModel.findById(userId);
       if (!user) {
@@ -362,8 +359,8 @@ router.post(
 
       // Check if already frozen
       if (user.status === "frozen") {
-        return res.status(400).json({ 
-          message: "User account is already frozen" 
+        return res.status(400).json({
+          message: "User account is already frozen",
         });
       }
 
@@ -374,11 +371,13 @@ router.post(
         adminUser.id,
         reason.trim(),
         req.ip,
-        req.get("user-agent")
+        req.get("user-agent"),
       );
 
       if (!updatedUser) {
-        return res.status(500).json({ message: "Failed to freeze user account" });
+        return res
+          .status(500)
+          .json({ message: "Failed to freeze user account" });
       }
 
       console.log(`[ADMIN] User account frozen: ${userId}`, {
@@ -388,12 +387,12 @@ router.post(
         timestamp: new Date().toISOString(),
       });
 
-      res.json({ 
+      res.json({
         message: "User account frozen successfully",
         user: {
           id: updatedUser.id,
           status: updatedUser.status,
-        }
+        },
       });
     } catch (error) {
       console.error("Error freezing user account:", error);
@@ -419,13 +418,13 @@ router.post(
 
       // Validate reason
       if (!reason || typeof reason !== "string" || reason.trim().length === 0) {
-        return res.status(400).json({ 
-          message: "A reason is required for unfreezing an account" 
+        return res.status(400).json({
+          message: "A reason is required for unfreezing an account",
         });
       }
 
       const userModel = new UserModel();
-      
+
       // Check if user exists
       const user = await userModel.findById(userId);
       if (!user) {
@@ -434,8 +433,8 @@ router.post(
 
       // Check if not frozen
       if (user.status !== "frozen") {
-        return res.status(400).json({ 
-          message: "User account is not frozen" 
+        return res.status(400).json({
+          message: "User account is not frozen",
         });
       }
 
@@ -446,11 +445,13 @@ router.post(
         adminUser.id,
         reason.trim(),
         req.ip,
-        req.get("user-agent")
+        req.get("user-agent"),
       );
 
       if (!updatedUser) {
-        return res.status(500).json({ message: "Failed to unfreeze user account" });
+        return res
+          .status(500)
+          .json({ message: "Failed to unfreeze user account" });
       }
 
       console.log(`[ADMIN] User account unfrozen: ${userId}`, {
@@ -460,12 +461,12 @@ router.post(
         timestamp: new Date().toISOString(),
       });
 
-      res.json({ 
+      res.json({
         message: "User account unfrozen successfully",
         user: {
           id: updatedUser.id,
           status: updatedUser.status,
-        }
+        },
       });
     } catch (error) {
       console.error("Error unfreezing user account:", error);
@@ -483,7 +484,7 @@ router.get(
     try {
       const userId = req.params.id;
       const userModel = new UserModel();
-      
+
       // Check if user exists
       const user = await userModel.findById(userId);
       if (!user) {
@@ -613,6 +614,15 @@ router.patch(
   logAdminAction("UPDATE_TRANSACTION_ADMIN_NOTES"),
   updateAdminNotesHandler,
 );
+
+/**
+ * =========================
+ * QUEUES & DLQ
+ * =========================
+ */
+
+// GET /api/admin/queues/dlq
+router.get("/queues/dlq", requireAdmin, logAdminAction("VIEW_DLQ"), dlqInspectorHandler);
 
 /**
  * =========================
@@ -770,5 +780,3 @@ router.get(
     }
   },
 );
-
-export const adminRoutes = router;
