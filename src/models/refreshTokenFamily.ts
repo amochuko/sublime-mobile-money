@@ -103,7 +103,7 @@ export class RefreshTokenFamilyModel {
         `SELECT token_jti FROM refresh_token_families
         WHERE revoked_at < NOW() - INTERVAL '30 days'`,
       );
-      
+
       // Delete all expired tokens
       const deleteResult = await client.query(
         `DELETE FROM refresh_token_families
@@ -121,6 +121,38 @@ export class RefreshTokenFamilyModel {
     } catch (err: any) {
       await client.query("ROLLBACK");
       throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  async revokeAll(userId: string, familyId: string) {
+    const client = await pool.connect();
+
+    try {
+      await client.query("BEGIN");
+
+      // Update DB
+      const tokenResult = await pool.query(
+        `UPDATE refresh_token_families 
+        SET revoked_at = NOW(), is_active = FALSE 
+        WHERE family_id = $1 AND user_id = $2`,
+        [familyId, userId],
+      );
+
+      await pool.query("COMMIT");
+
+      return {
+        data: {
+          success: true,
+          tokenResult,
+        },
+      };
+    } catch (err: any) {
+      await client.query("ROLLBACK");
+      console.error("Error revoking all tokens:", err);
+
+      throw err.message;
     } finally {
       client.release();
     }
