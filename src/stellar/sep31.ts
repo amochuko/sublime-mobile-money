@@ -445,5 +445,5 @@ router.patch("/transactions/:id", sep31WriteLimiter, async (req: Request, res: R
   }
 });
 
-export { Sep31Status, SEP31_CONFIG, calculateFee, mapToSep31Status, isValidTransition, VALID_TRANSITIONS };
+export { SEP31_CONFIG, calculateFee, mapToSep31Status, isValidTransition, VALID_TRANSITIONS };
 export default router;
