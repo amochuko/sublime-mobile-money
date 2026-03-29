@@ -49,12 +49,47 @@ export class RefreshTokenFamilyModel {
     return result.rows[0];
   }
 
-  async revokeFamily(family_id: string, user_id:string) {
-    await pool.query(
-      `UPDATE refresh_token_families SET is_revoked = TRUE, revoked_at = NOW() 
-      WHERE family_id = $1 AND user_id = $2`,
-      [family_id, user_id],
-    );
+  async revokeFamily(familyId: string, userId: string) {
+    const client = await pool.connect();
+
+    try {
+      const result = await client.query(
+        `SELECT family_id FROM refresh_token_families
+               WHERE id = $1 AND user_id = $2`,
+        [familyId, userId],
+      );
+
+      if (result.rows.length === 0) {
+        throw new Error("Token not found");
+      }
+
+      const { family_id } = result.rows[0];
+
+      await client.query("BEGIN");
+
+      // Update DB
+      await pool.query(
+        `UPDATE refresh_token_families 
+        SET revoked_at = NOW(), is_active = FALSE 
+        WHERE id = $1`,
+        [family_id],
+      );
+
+      await pool.query("COMMIT");
+
+      return {
+        data: {
+          familyId: family_id,
+        },
+      };
+    } catch (err: any) {
+      await client.query("ROLLBACK");
+      console.error(err);
+
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 
   async isRevoked(token: string) {
