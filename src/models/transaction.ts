@@ -1,4 +1,4 @@
-import { pool } from "../config/database";
+import { pool, queryRead, queryWrite } from "../config/database";
 import { generateReferenceNumber } from "../utils/referenceGenerator";
 import { encrypt, decrypt } from "../utils/encryption";
 
@@ -201,7 +201,7 @@ export class TransactionModel {
     const metadata = validateMetadata(data.metadata);
     const referenceNumber = await generateReferenceNumber();
 
-    const result = await pool.query(
+    const result = await queryWrite(
       `INSERT INTO transactions (
            reference_number, type, amount, currency, original_amount, 
            converted_amount, phone_number, provider, stellar_address, 
@@ -234,8 +234,19 @@ export class TransactionModel {
     return mapTransactionRow(result.rows[0])!;
   }
 
-  async findById(id: string): Promise<Transaction | null> {
+  async findByUserId(userId: string): Promise<Transaction[]> {
     const result = await pool.query<Transaction>(
+      `SELECT ${TRANSACTION_SELECT_COLUMNS}
+       FROM transactions
+       WHERE user_id = $1`,
+      [userId],
+    );
+
+    return result.rows;
+  }
+
+  async findById(id: string): Promise<Transaction | null> {
+     const result = await queryRead<Transaction>(
       `SELECT ${TRANSACTION_SELECT_COLUMNS}
         FROM transactions
         WHERE id = $1`,
@@ -297,7 +308,7 @@ export class TransactionModel {
     query += " ORDER BY created_at DESC LIMIT $" + p++ + " OFFSET $" + p++;
     params.push(capped, off);
 
-    const result = await pool.query(query, params);
+    const result = await queryRead(query, params);
     return result.rows
       .map((r) => mapTransactionRow(r))
       .filter((t): t is Transaction => t !== null);
@@ -345,12 +356,12 @@ export class TransactionModel {
       params.push(filters.tags);
     }
 
-    const result = await pool.query(query, params);
-    return parseInt(result.rows[0].count, 10);
+    const result = await queryRead(query, params);
+    return parseInt(result.rows[0].count);
   }
 
   async updateStatus(id: string, status: TransactionStatus): Promise<void> {
-    await pool.query(
+    await queryWrite(
       "UPDATE transactions SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2",
       [status, id],
     );
@@ -360,7 +371,7 @@ export class TransactionModel {
     id: string,
     delivery: WebhookDeliveryUpdate,
   ): Promise<void> {
-    await pool.query(
+    await queryWrite(
       `UPDATE transactions
         SET webhook_delivery_status = $1,
             webhook_last_attempt_at = $2,
@@ -381,7 +392,7 @@ export class TransactionModel {
   async findByReferenceNumber(
     referenceNumber: string,
   ): Promise<Transaction | null> {
-    const result = await pool.query<Transaction>(
+    const result = await queryRead<Transaction>(
       `SELECT ${TRANSACTION_SELECT_COLUMNS}
         FROM transactions
         WHERE reference_number = $1`,
@@ -394,7 +405,7 @@ export class TransactionModel {
   async findByTags(tags: string[]): Promise<Transaction[]> {
     validateTags(tags);
 
-    const result = await pool.query<Transaction>(
+    const result = await queryRead<Transaction>(
       `SELECT ${TRANSACTION_SELECT_COLUMNS}
         FROM transactions
         WHERE tags @> $1
@@ -410,7 +421,7 @@ export class TransactionModel {
   async addTags(id: string, tags: string[]): Promise<Transaction | null> {
     validateTags(tags);
 
-    const result = await pool.query<Transaction>(
+    const result = await queryWrite<Transaction>(
       `UPDATE transactions
         SET tags = (
           SELECT ARRAY(SELECT DISTINCT unnest(tags || $1::TEXT[]))
@@ -430,7 +441,7 @@ export class TransactionModel {
   }
 
   async removeTags(id: string, tags: string[]): Promise<Transaction | null> {
-    const result = await pool.query<Transaction>(
+    const result = await queryWrite<Transaction>(
       `UPDATE transactions
         SET tags = ARRAY(
           SELECT unnest(tags)
@@ -450,7 +461,7 @@ export class TransactionModel {
     userId: string,
     since: Date,
   ): Promise<Transaction[]> {
-    const result = await pool.query<Transaction>(
+    const result = await queryRead<Transaction>(
       `SELECT ${TRANSACTION_SELECT_COLUMNS}
         FROM transactions
         WHERE user_id = $1
@@ -466,7 +477,7 @@ export class TransactionModel {
 
   /** Increments retry_count after a failed transient attempt (before the next try). */
   async incrementRetryCount(id: string): Promise<number> {
-    const result = await pool.query(
+    const result = await queryWrite(
       `UPDATE transactions
         SET retry_count = retry_count + 1,
             updated_at = CURRENT_TIMESTAMP
@@ -484,7 +495,7 @@ export class TransactionModel {
     }
 
     const encryptedNotes = encrypt(notes);
-    const result = await pool.query<Transaction>(
+    const result = await queryWrite<Transaction>(
       `UPDATE transactions
         SET notes = $1, updated_at = CURRENT_TIMESTAMP
         WHERE id = $2
@@ -504,7 +515,7 @@ export class TransactionModel {
     }
 
     const encryptedAdminNotes = encrypt(adminNotes);
-    const result = await pool.query<Transaction>(
+    const result = await queryWrite<Transaction>(
       `UPDATE transactions
         SET admin_notes = $1, updated_at = CURRENT_TIMESTAMP
         WHERE id = $2
@@ -516,7 +527,7 @@ export class TransactionModel {
   }
 
   async searchByNotes(query: string): Promise<Transaction[]> {
-    const result = await pool.query<Transaction>(
+    const result = await queryRead<Transaction>(
       `SELECT ${TRANSACTION_SELECT_COLUMNS}
         FROM transactions
         WHERE to_tsvector(
@@ -540,7 +551,7 @@ export class TransactionModel {
   ): Promise<Transaction | null> {
     const validated = validateMetadata(metadata);
 
-    const result = await pool.query<Transaction>(
+    const result = await queryWrite<Transaction>(
       `UPDATE transactions
         SET metadata = $1::jsonb, updated_at = CURRENT_TIMESTAMP
         WHERE id = $2
@@ -557,7 +568,7 @@ export class TransactionModel {
   ): Promise<Transaction | null> {
     validateMetadata(patch);
 
-    const result = await pool.query<Transaction>(
+    const result = await queryWrite<Transaction>(
       `UPDATE transactions
         SET metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb,
             updated_at = CURRENT_TIMESTAMP
@@ -574,7 +585,7 @@ export class TransactionModel {
       );
       if (combinedSize > MAX_METADATA_BYTES) {
         const keys = Object.keys(patch);
-        await pool.query(
+        await queryWrite(
           `UPDATE transactions
             SET metadata = metadata - $1::text[],
                 updated_at = CURRENT_TIMESTAMP
@@ -596,7 +607,7 @@ export class TransactionModel {
   ): Promise<Transaction | null> {
     if (!keys.length) return this.findById(id);
 
-    const result = await pool.query<Transaction>(
+    const result = await queryWrite<Transaction>(
       `UPDATE transactions
         SET metadata = metadata - $1::text[],
             updated_at = CURRENT_TIMESTAMP
@@ -611,7 +622,7 @@ export class TransactionModel {
   async findByMetadata(
     filter: Record<string, unknown>,
   ): Promise<Transaction[]> {
-    const result = await pool.query<Transaction>(
+    const result = await queryRead<Transaction>(
       `SELECT ${TRANSACTION_SELECT_COLUMNS}
         FROM transactions
         WHERE metadata @> $1::jsonb
@@ -632,7 +643,7 @@ export class TransactionModel {
     const capped = Math.min(Math.max(limit, 1), 100);
     const off = Math.max(offset, 0);
 
-    const result = await pool.query<Transaction>(
+    const result = await queryRead<Transaction>(
       `SELECT ${TRANSACTION_SELECT_COLUMNS}
         FROM transactions
         ORDER BY created_at DESC
@@ -651,7 +662,7 @@ export class TransactionModel {
   }
 
   async releaseExpiredIdempotencyKey(idempotencyKey: string): Promise<void> {
-    await pool.query(
+    await queryWrite(
       `UPDATE transactions
         SET idempotency_key = NULL,
             idempotency_expires_at = NULL,
@@ -664,7 +675,7 @@ export class TransactionModel {
   }
 
   async releaseAllExpiredIdempotencyKeys(): Promise<number> {
-    const result = await pool.query<{ released: number }>(
+    const result = await queryWrite<{ released: number }>(
       `WITH updated AS (
           UPDATE transactions
           SET idempotency_key = NULL,
@@ -684,7 +695,7 @@ export class TransactionModel {
   async findActiveByIdempotencyKey(
     idempotencyKey: string,
   ): Promise<Transaction | null> {
-    const result = await pool.query<Transaction>(
+    const result = await queryRead<Transaction>(
       `SELECT ${TRANSACTION_SELECT_COLUMNS}
         FROM transactions
         WHERE idempotency_key = $1
@@ -703,7 +714,7 @@ export class TransactionModel {
   async countByStatuses(statuses: TransactionStatus[]): Promise<number> {
     const validStatuses =
       statuses.length > 0 ? statuses : Object.values(TransactionStatus);
-    const result = await pool.query<{ total: number }>(
+    const result = await queryRead<{ total: number }>(
       `SELECT COUNT(*)::int AS total
         FROM transactions
         WHERE status = ANY($1::text[])`,
@@ -723,7 +734,7 @@ export class TransactionModel {
     const validStatuses =
       statuses.length > 0 ? statuses : Object.values(TransactionStatus);
 
-    const result = await pool.query<Transaction>(
+    const result = await queryRead<Transaction>(
       `SELECT ${TRANSACTION_SELECT_COLUMNS}
         FROM transactions
         WHERE status = ANY($1::text[])
